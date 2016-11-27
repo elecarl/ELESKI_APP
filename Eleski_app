@@ -1,0 +1,255 @@
+package com.example.carl.eleski_01;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.lang.reflect.Method;
+import java.util.UUID;
+
+import android.os.Bundle;
+import android.app.Activity;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
+import android.content.Intent;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.util.Log;
+import android.view.View;
+import android.view.View.OnClickListener;
+import android.widget.Button;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import com.example.carl.carl_eleski.R;
+
+import java.lang.Thread;
+
+
+public class MainActivity extends Activity {
+    private static final String TAG = "bluetooth";
+
+    Button btnOn, btnOff;
+    OutputStream outStream = null;
+
+    private BluetoothAdapter btAdapter = null;
+    private BluetoothSocket btSocket = null;
+    Handler bluetoothIn;
+
+    TextView txtArduino, txtString, txtStringLength, sensorView0, sensorView1, sensorView2, sensorView3;
+    final StringBuilder recDataString = new StringBuilder();
+    private ConnectedThread mConnectedThread;
+
+    private static final UUID MY_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+
+    private static String address = "20:15:12:23:73:31";
+
+    final int handlerState = 0;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+
+        txtString = (TextView) findViewById(R.id.txtString);
+        txtStringLength = (TextView) findViewById(R.id.testView1);
+        sensorView0 = (TextView) findViewById(R.id.sensorView0);
+        sensorView1 = (TextView) findViewById(R.id.sensorView1);
+        sensorView2 = (TextView) findViewById(R.id.sensorView2);
+        sensorView3 = (TextView) findViewById(R.id.sensorView3);
+
+         bluetoothIn = new Handler() {
+            public void handleMessage(android.os.Message msg) {
+                if (msg.what == handlerState) {
+                    String readMessage = (String) msg.obj;
+                    recDataString.append(readMessage);
+                    int endOfLineIndex = recDataString.indexOf("~");
+                    if (endOfLineIndex > 0) {
+                        String dataInPrint = recDataString.substring(0, endOfLineIndex);
+                        txtString.setText("Donnees recues = " + dataInPrint);
+                        int dataLength = dataInPrint.length();
+                        txtStringLength.setText("Longueur =" + String.valueOf(dataLength));
+
+                        if (recDataString.charAt(0) == '#') {
+                            String sensor0 = recDataString.substring(1, 5);
+                            String sensor1 = recDataString.substring(6, 10);
+                            String sensor2 = recDataString.substring(11, 15);
+                            String sensor3 = recDataString.substring(16, 20);
+                            sensorView0.setText("Acceleration =" + sensor0 + "m/s^2");
+                            sensorView1.setText("Vitesse =" + sensor1 + "m/s");
+                            sensorView2.setText("Pression =" + sensor2 + "Kpa");
+                            sensorView3.setText("Temperature =" + sensor3 + "Celsius");
+                        }
+                        recDataString.delete(0, recDataString.length());
+                        dataInPrint = " ";
+
+                    }
+
+                }
+            }
+        };
+
+
+        btnOn = (Button) findViewById(R.id.btnOn);
+        btnOff = (Button) findViewById(R.id.btnOff);
+
+        btAdapter = BluetoothAdapter.getDefaultAdapter();
+        checkBTState();
+
+        btnOn.setOnClickListener(new OnClickListener() {
+            public void onClick(View v) {
+                sendData("1");
+                Toast.makeText(getBaseContext(), "Actionner la LED", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        btnOff.setOnClickListener(new OnClickListener() {
+            public void onClick(View v) {
+                sendData("0");
+                Toast.makeText(getBaseContext(), "Eteindre la LED", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private BluetoothSocket createBluetoothSocket(BluetoothDevice device) throws IOException {
+        try {
+            final Method m = device.getClass().getMethod("createInsecureRfcommSocketToServiceRecord", new Class[]{UUID.class});
+            return (BluetoothSocket) m.invoke(device, MY_UUID);
+        } catch (Exception e) {
+            Log.e(TAG, "impossible de creer une connection securisee");
+        }
+        return device.createRfcommSocketToServiceRecord(MY_UUID);
+    }
+
+
+    @Override
+    public void onResume() {
+        super.onResume();
+
+        Log.d(TAG, "... tentative de connection...");
+
+        BluetoothDevice device = btAdapter.getRemoteDevice(address);
+
+        try {
+            btSocket = createBluetoothSocket(device);
+        } catch (IOException e1) {
+
+        }
+        btAdapter.cancelDiscovery();
+
+        Log.d(TAG, "...connection en cours...");
+        try {
+            btSocket.connect();
+            Log.d(TAG, "...connection reussie...");
+        } catch (IOException e) {
+            try {
+                btSocket.close();
+            } catch (IOException e2) {
+            }
+        }
+
+        Log.d(TAG, "...Creation de socket...");
+
+        try {
+            outStream = btSocket.getOutputStream();
+        } catch (IOException e) {
+        }
+        mConnectedThread = new ConnectedThread(btSocket);
+        mConnectedThread.start();
+        //mConnectedThread.bluetoothIn.post(mConnectedThread.runnable);
+        //mConnectedThread.write("x");
+    }
+
+
+    @Override
+    public void onPause() {
+        super.onPause();
+
+        if (outStream != null) {
+            try {
+                outStream.flush();
+            } catch (IOException e) {
+
+            }
+        }
+        try {
+            btSocket.close();
+        } catch (IOException e2) {
+
+        }
+    }
+
+
+    private void checkBTState() {
+        if (btAdapter.isEnabled()) {
+            Log.d(TAG, "Bluetooth actionne");
+        } else {
+            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            startActivityForResult(enableBtIntent, 1);
+        }
+    }
+
+
+    private void sendData(String message) {
+        byte[] msgBuffer = message.getBytes();
+
+        Log.d(TAG, "envoie de donnees:" + message + "...");
+
+        try {
+            outStream.write(msgBuffer);
+        } catch (IOException e) {
+
+        }
+    }
+
+    private class ConnectedThread extends Thread {
+        private InputStream inStream = null;
+
+        public ConnectedThread(BluetoothSocket socket) {
+
+            try {
+                inStream = socket.getInputStream();
+                outStream = socket.getOutputStream();
+            } catch (IOException e) {
+            }
+
+        }
+
+
+
+        //Runnable runnable = new Runnable() {
+            //@Override
+            public void run() {
+                byte[] buffer = new byte[256];
+                int bytes;
+
+
+                while (true) {
+                    try {
+                        bytes = inStream.read(buffer);
+                        String readMessage = new String(buffer, 0, bytes);
+                        bluetoothIn.obtainMessage(handlerState, bytes, -1, readMessage).sendToTarget();
+                    } catch (IOException e) {
+                        break;
+                    }
+                }
+                mConnectedThread.start();
+                bluetoothIn.postDelayed(this, 500);
+                Log.d(TAG, "...testing 1,2,3 ...");
+
+            }
+
+        };
+
+        public void write(String input) {
+            byte[] msgBuffer = input.getBytes();
+            try {
+                outStream.write(msgBuffer);
+            } catch (IOException e) {
+                Toast.makeText(getBaseContext(), "echec de la connection", Toast.LENGTH_LONG).show();
+                finish();
+            }
+        }
+    }
+//}
